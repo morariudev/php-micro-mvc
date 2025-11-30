@@ -18,6 +18,11 @@ services:
     volumes:
       - ./:/var/www/html
 
+      # persistent dev storage
+      - ./database:/var/www/html/database
+      - ./uploads:/var/www/html/uploads
+      - ./cache:/var/www/html/cache
+
     networks:
       - app-network
 
@@ -29,6 +34,12 @@ services:
     volumes:
       - ./:/var/www/html
       - ./nginx/default.dev.conf:/etc/nginx/conf.d/default.conf
+
+      # same persistent dirs
+      - ./database:/var/www/html/database
+      - ./uploads:/var/www/html/uploads
+      - ./cache:/var/www/html/cache
+
     depends_on:
       - app
     networks:
