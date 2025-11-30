@@ -15,6 +15,15 @@ use Framework\Support\Container;
 use Framework\Support\Database;
 use Framework\View\TwigRenderer;
 
+/**
+ * Class Bootstrap
+ *
+ * Handles the initialization of the framework:
+ * - Loads config
+ * - Registers core services (DB, Twig, Session, Events)
+ * - Loads routes (with optional route caching)
+ * - Sets up the dispatcher and middleware
+ */
 class Bootstrap
 {
     private string $basePath;
@@ -23,11 +32,14 @@ class Bootstrap
 
     public function __construct(string $basePath)
     {
-        $this->basePath = rtrim($basePath, DIRECTORY_SEPARATOR);
+        $this->basePath  = rtrim($basePath, DIRECTORY_SEPARATOR);
         $this->container = new Container();
-        $this->router = new Router();
+        $this->router    = new Router();
     }
 
+    /**
+     * Initialize framework and return the HTTP Dispatcher.
+     */
     public function init(): Dispatcher
     {
         $this->loadConfig();
@@ -36,7 +48,7 @@ class Bootstrap
 
         $dispatcher = new Dispatcher($this->router, $this->container);
 
-        // Middleware stack (order: auth → JSON → CSRF → example)
+        // Middleware stack order: auth → JSON body → CSRF → example
         $dispatcher->addMiddleware(SessionAuthMiddleware::class);
         $dispatcher->addMiddleware(\Framework\Middleware\JsonBodyMiddleware::class);
         $dispatcher->addMiddleware(CsrfMiddleware::class);
@@ -45,6 +57,9 @@ class Bootstrap
         return $dispatcher;
     }
 
+    /**
+     * Load configuration files into the container.
+     */
     private function loadConfig(): void
     {
         $app = require $this->basePath . '/App/Config/app.php';
@@ -54,6 +69,9 @@ class Bootstrap
         $this->container->set('config.database', $db);
     }
 
+    /**
+     * Register core framework services.
+     */
     private function registerCoreServices(): void
     {
         $appConfig = $this->container->get('config.app');
@@ -64,27 +82,30 @@ class Bootstrap
             return new Database($this->container->get('config.database'));
         });
 
-        // TwigRenderer singleton with debug-aware caching
+        // Twig singleton (pass session + debug flag)
         $this->container->set(TwigRenderer::class, function () use ($debug): TwigRenderer {
-            $cachePath = $debug ? null : $this->basePath . '/cache/twig';
-            return new TwigRenderer($this->basePath . '/App/Views', $debug, $cachePath);
+            $session = $this->container->get(SessionManager::class);
+            return new TwigRenderer($this->basePath . '/App/Views', $session, $debug);
         });
 
-        // SessionManager singleton
+        // Session manager
         $this->container->set(SessionManager::class, function () {
             return new SessionManager();
         });
 
-        // EventDispatcher singleton
+        // Event dispatcher
         $this->container->set(EventDispatcher::class, function () {
             return new EventDispatcher();
         });
 
-        // Provide container & router as dependencies
+        // Container & router access
         $this->container->set(Container::class, $this->container);
         $this->container->set(Router::class, $this->router);
     }
 
+    /**
+     * Load routes from files, optionally using route cache.
+     */
     private function loadRoutes(): void
     {
         $routesPath = $this->basePath . '/App/Routes';
@@ -94,7 +115,7 @@ class Bootstrap
         $appConfig = $this->container->get('config.app');
         $debug     = (bool)($appConfig['debug'] ?? false);
 
-        // Load from cache if not in debug mode
+        // Use cached routes in non-debug mode if available
         if (!$debug) {
             $cachedRoutes = $cache->read();
             if ($cachedRoutes !== null) {
@@ -103,6 +124,7 @@ class Bootstrap
             }
         }
 
+        // Load routes from files
         $collector = new RouteCollector($this->router);
 
         foreach (glob($routesPath . '/*.php') as $file) {
@@ -116,14 +138,14 @@ class Bootstrap
             }
         }
 
-        // Cache routes if cacheable and not in debug
+        // Save route cache in non-debug mode if all routes are serializable
         if (!$debug && $this->routesAreCacheable()) {
             $cache->write($this->router->getRoutes());
         }
     }
 
     /**
-     * Ensure all route handlers are serializable (no Closures).
+     * Returns true if all route handlers are serializable (no closures).
      */
     private function routesAreCacheable(): bool
     {
@@ -136,6 +158,9 @@ class Bootstrap
         return true;
     }
 
+    /**
+     * Return DI container instance.
+     */
     public function getContainer(): Container
     {
         return $this->container;
