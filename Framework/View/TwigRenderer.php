@@ -15,14 +15,18 @@ class TwigRenderer
     private Psr17Factory $factory;
     private SessionManager $session;
 
-    public function __construct(string $viewsPath, bool $debug = true)
+    /**
+     * @param string $viewsPath Path to Twig templates
+     * @param bool $debug Enable debug mode (disables caching)
+     * @param SessionManager|null $session Session instance for helpers
+     */
+    public function __construct(string $viewsPath, bool $debug = true, ?SessionManager $session = null)
     {
         $loader = new FilesystemLoader($viewsPath);
 
-        // Use cache only in non-debug mode
+        // Cache path only in non-debug mode
         $cachePath = $debug ? false : __DIR__ . '/../../cache/twig';
 
-        // Ensure cache folder exists
         if ($cachePath !== false && !is_dir($cachePath)) {
             mkdir($cachePath, 0775, true);
         }
@@ -33,7 +37,8 @@ class TwigRenderer
             'debug'      => $debug,
         ]);
 
-        $this->factory = new \Nyholm\Psr7\Factory\Psr17Factory();
+        $this->factory = new Psr17Factory();
+        $this->session = $session ?? new SessionManager();
 
         $this->registerHelpers();
     }
@@ -43,13 +48,13 @@ class TwigRenderer
      */
     private function registerHelpers(): void
     {
-        // CSRF token
+        // CSRF token helper
         $this->twig->addFunction(new TwigFunction('csrf', function () {
             $token = $this->session->get('_csrf_token') ?? '';
             return '<input type="hidden" name="_csrf" value="' . htmlspecialchars($token, ENT_QUOTES, 'UTF-8') . '">';
         }, ['is_safe' => ['html']]));
 
-        // Asset path
+        // Asset URL helper
         $this->twig->addFunction(new TwigFunction('asset', function (string $path) {
             return '/' . ltrim($path, '/');
         }));
@@ -59,29 +64,28 @@ class TwigRenderer
             return '/' . ltrim($path, '/');
         }));
 
-        // Flash messages
+        // Flash messages helper
         $this->twig->addFunction(new TwigFunction('flash', function (string $key) {
             return $this->session->getFlash($key);
         }));
     }
 
     /**
-     * Render a Twig view into a PSR-7 Response.
+     * Render a Twig template into a PSR-7 Response
      *
      * @param array<string, mixed> $data
      */
     public function render(string $template, array $data = []): ResponseInterface
     {
         $response = $this->factory->createResponse(200);
-        $html     = $this->twig->render($template, $data);
-
+        $html = $this->twig->render($template, $data);
         $response->getBody()->write($html);
 
         return $response->withHeader('Content-Type', 'text/html; charset=utf-8');
     }
 
     /**
-     * Create a JSON PSR-7 response.
+     * Create a JSON PSR-7 response
      */
     public function createJsonResponse(string $json, int $status = 200): ResponseInterface
     {
@@ -92,7 +96,7 @@ class TwigRenderer
     }
 
     /**
-     * Access raw Twig environment (for adding filters, globals, etc.)
+     * Access raw Twig environment
      */
     public function getTwig(): Environment
     {
