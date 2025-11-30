@@ -20,9 +20,7 @@ class RouteCollector
     }
 
     /**
-     * Define a named middleware group.
-     *
-     * @param array<int, string> $middleware
+     * Define a named middleware group ("auth", "api", etc.)
      */
     public function defineGroup(string $name, array $middleware): void
     {
@@ -30,9 +28,7 @@ class RouteCollector
     }
 
     /**
-     * Use a named middleware group for all routes in the callback.
-     *
-     * @param callable(RouteCollector):void $callback
+     * Use a named middleware group inside the callback
      */
     public function useGroup(string $name, callable $callback): void
     {
@@ -41,89 +37,82 @@ class RouteCollector
     }
 
     /**
-     * @param callable(RouteCollector):void $callback
-     * @param array<int, string> $middleware
+     * Route grouping (prefix + middleware)
      */
     public function group(string $prefix, callable $callback, array $middleware = []): void
     {
         $previousPrefix = $this->groupPrefix;
         $previousMiddleware = $this->groupMiddleware;
 
+        // Normalize and merge prefixes
         $prefix = trim($prefix, '/');
-        $this->groupPrefix = $previousPrefix;
+        $merged = trim($previousPrefix, '/');
 
         if ($prefix !== '') {
-            $this->groupPrefix = rtrim($previousPrefix . '/' . $prefix, '/');
+            $merged = $merged !== '' ? $merged . '/' . $prefix : $prefix;
         }
 
+        $this->groupPrefix = $merged;
         $this->groupMiddleware = array_merge($previousMiddleware, $middleware);
 
         $callback($this);
 
+        // Restore previous group settings
         $this->groupPrefix = $previousPrefix;
         $this->groupMiddleware = $previousMiddleware;
     }
 
     /**
-     * @param callable|array|string $handler
+     * Add a route with inherited group prefix + middleware
      */
     public function add(string $method, string $path, $handler, array $middleware = []): Route
     {
         $path = trim($path, '/');
 
+        // Merge with group prefix
         $prefix = trim($this->groupPrefix, '/');
         if ($prefix !== '') {
-            $fullPath = '/' . trim($prefix . '/' . $path, '/');
+            $fullPath = '/' . trim("$prefix/$path", '/');
         } else {
             $fullPath = $path === '' ? '/' : '/' . $path;
         }
 
-        $fullPath = $fullPath === '' ? '/' : $fullPath;
-        $fullPath = $fullPath === '/' ? '/' : rtrim($fullPath, '/');
+        // Normalize the full path
+        $fullPath = $fullPath === '' ? '/' : rtrim($fullPath, '/');
 
+        // Register route
         $route = $this->router->add($method, $fullPath, $handler);
+
+        // Apply middleware inheritance
         $route->addMiddleware(array_merge($this->groupMiddleware, $middleware));
 
         return $route;
     }
 
-    /**
-     * @param callable|array|string $handler
-     */
+    // Convenience methods
+
     public function get(string $path, $handler, array $middleware = []): Route
     {
         return $this->add('GET', $path, $handler, $middleware);
     }
 
-    /**
-     * @param callable|array|string $handler
-     */
     public function post(string $path, $handler, array $middleware = []): Route
     {
         return $this->add('POST', $path, $handler, $middleware);
     }
 
-    /**
-     * @param callable|array|string $handler
-     */
     public function put(string $path, $handler, array $middleware = []): Route
     {
         return $this->add('PUT', $path, $handler, $middleware);
     }
 
-    /**
-     * @param callable|array|string $handler
-     */
-    public function delete(string $path, $handler, array $middleware = []): Route
-    {
-        return $this->add('DELETE', $path, $handler, $middleware);
-    }
-
-    /**
-     * @param callable|array|string $handler
-     */
     public function patch(string $path, $handler, array $middleware = []): Route
     {
         return $this->add('PATCH', $path, $handler, $middleware);
+    }
+
+    public function delete(string $path, $handler, array $middleware = []): Route
+    {
+        return $this->add('DELETE', $path, $handler, $middleware);
     }
 }

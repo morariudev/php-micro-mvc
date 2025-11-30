@@ -3,26 +3,25 @@
 namespace App\Http\Controllers;
 
 use App\Models\User;
-use Framework\View\TwigRenderer;
+use Framework\Http\Controller;
 use Psr\Http\Message\ResponseInterface;
 use Psr\Http\Message\ServerRequestInterface;
 
-class UserController
+class UserController extends Controller
 {
     private User $user;
-    private TwigRenderer $view;
 
-    public function __construct(User $user, TwigRenderer $view)
+    public function __construct(User $user, \Framework\Support\Container $container)
     {
+        parent::__construct($container);
         $this->user = $user;
-        $this->view = $view;
     }
 
     public function index(ServerRequestInterface $request): ResponseInterface
     {
         $users = $this->user->all();
 
-        return $this->view->render('users/index.twig', [
+        return $this->view('users/index.twig', [
             'users' => $users,
         ]);
     }
@@ -32,35 +31,23 @@ class UserController
         $user = $this->user->find($id);
 
         if ($user === null) {
-            return $this->view->render('users/show.twig', [
+            return $this->view('users/show.twig', [
                 'user' => null,
             ])->withStatus(404);
         }
 
-        return $this->view->render('users/show.twig', [
+        return $this->view('users/show.twig', [
             'user' => $user,
         ]);
     }
 
     public function apiIndex(ServerRequestInterface $request): ResponseInterface
     {
-        $users = $this->user->all();
-
-        $data = json_encode($users, JSON_THROW_ON_ERROR);
-
-        $response = $this->view->createJsonResponse($data);
-
-        return $response;
+        return $this->json($this->user->all());
     }
 
     public function apiShow(ServerRequestInterface $request, int $id): ResponseInterface
     {
-        $user = $this->user->find($id);
-
-        $data = json_encode($user, JSON_THROW_ON_ERROR);
-
-        $response = $this->view->createJsonResponse($data ?: 'null');
-
-        return $response;
+        return $this->json($this->user->find($id));
     }
 }

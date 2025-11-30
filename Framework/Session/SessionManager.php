@@ -40,9 +40,47 @@ class SessionManager
     public function destroy(): void
     {
         if (session_status() === PHP_SESSION_ACTIVE) {
+            // Clear session array for current request
+            $_SESSION = [];
+
+            // Destroy session storage
             session_destroy();
         }
 
         $this->started = false;
     }
+
+    public function flash(string $key, $value): void
+    {
+        $this->start();
+        $_SESSION['_flash'][$key] = $value;
+    }
+
+    public function getFlash(string $key, $default = null)
+    {
+        $this->start();
+
+        if (!isset($_SESSION['_flash'][$key])) {
+            return $default;
+        }
+
+        $value = $_SESSION['_flash'][$key];
+        unset($_SESSION['_flash'][$key]);
+
+        return $value;
+    }
+
+    /**
+     * @return array<string, mixed>
+     */
+    public function allFlash(): array
+    {
+        $this->start();
+
+        $flash = $_SESSION['_flash'] ?? [];
+        unset($_SESSION['_flash']);
+
+        return $flash;
+    }
+
 }

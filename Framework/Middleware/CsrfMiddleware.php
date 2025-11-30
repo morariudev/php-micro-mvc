@@ -27,22 +27,33 @@ class CsrfMiddleware implements MiddlewareInterface
 
         $token = $this->session->get('_csrf_token');
 
-        // 2. For GET/HEAD/OPTIONS: Pass through + attach token attribute
+        // 2. For safe methods: just attach the token
         if (!in_array($request->getMethod(), ['POST', 'PUT', 'PATCH', 'DELETE'], true)) {
             return $next($request->withAttribute('csrf_token', $token));
         }
 
-        // 3. For unsafe requests: validate CSRF token
-        $parsed = $request->getParsedBody() ?? [];
+        // 3. For unsafe methods: validate CSRF token
+        $parsed = $request->getParsedBody();
+        if (!is_array($parsed)) {
+            $parsed = [];
+        }
+
         $sentToken = $parsed['_csrf'] ?? null;
 
-        if (!is_string($sentToken) || !hash_equals($token, $sentToken)) {
+        // Also allow header token for JSON / API clients
+        $headerToken = $request->getHeaderLine('X-CSRF-TOKEN');
+        if ($headerToken !== '') {
+            $sentToken = $headerToken;
+        }
+
+        if (!is_string($sentToken) || !hash_equals((string) $token, $sentToken)) {
             $factory = new Psr17Factory();
             $response = $factory->createResponse(419); // Laravel-style CSRF code
             $response->getBody()->write('CSRF token mismatch.');
-            return $response;
+            return $response->withHeader('Content-Type', 'text/plain; charset=utf-8');
         }
 
         return $next($request->withAttribute('csrf_token', $token));
     }
+
 }

@@ -36,8 +36,9 @@ class Bootstrap
 
         $dispatcher = new Dispatcher($this->router, $this->container);
 
-        // Middleware stack
+        // Middleware stack (order: auth → JSON → CSRF → example)
         $dispatcher->addMiddleware(SessionAuthMiddleware::class);
+        $dispatcher->addMiddleware(\Framework\Middleware\JsonBodyMiddleware::class);
         $dispatcher->addMiddleware(CsrfMiddleware::class);
         $dispatcher->addMiddleware(ExampleMiddleware::class);
 
@@ -78,8 +79,24 @@ class Bootstrap
 
     private function loadRoutes(): void
     {
-        $collector = new RouteCollector($this->router);
         $routesPath = $this->basePath . '/App/Routes';
+        $cacheFile  = $this->basePath . '/cache/routes.cache.php';
+        $cache      = new RouteCache($cacheFile);
+
+        // Try to load from cache in non-debug mode
+        $appConfig = $this->container->get('config.app');
+        $debug     = (bool)($appConfig['debug'] ?? false);
+
+        if (!$debug) {
+            $cachedRoutes = $cache->read();
+            if ($cachedRoutes !== null) {
+                $this->router->setRoutes($cachedRoutes);
+                return;
+            }
+        }
+
+        // No cache (or debug mode) → load from route files
+        $collector = new RouteCollector($this->router);
 
         foreach (glob($routesPath . '/*.php') as $file) {
             $callback = require $file;
@@ -88,8 +105,26 @@ class Bootstrap
             }
         }
 
-        $cache = new RouteCache($this->basePath . '/cache/routes.cache.php');
-        $cache->write($this->router->getRoutes());
+        // Only write cache if we're not in debug and routes are cacheable
+        if (!$debug && $this->routesAreCacheable()) {
+            $cache->write($this->router->getRoutes());
+        }
+    }
+
+    /**
+     * Ensure all route handlers are serializable (no Closures).
+     */
+    private function routesAreCacheable(): bool
+    {
+        foreach ($this->router->getRoutes() as $route) {
+            $handler = $route->getHandler();
+
+            if ($handler instanceof \Closure) {
+                return false;
+            }
+        }
+
+        return true;
     }
 
     public function getContainer(): Container

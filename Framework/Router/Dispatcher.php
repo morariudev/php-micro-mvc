@@ -31,31 +31,26 @@ class Dispatcher
 
     public function dispatch(ServerRequestInterface $request): ResponseInterface
     {
-        // Normalize path: remove trailing slash except for root
         $path = rtrim($request->getUri()->getPath(), '/') ?: '/';
         $originalMethod = strtoupper($request->getMethod());
         $method = $originalMethod;
-        $isHeadRequest = $originalMethod === 'HEAD';
+        $isHeadRequest = $method === 'HEAD';
 
-        // Ensure route tree is compiled
         $this->router->compile();
 
         try {
-            // Automatic OPTIONS handling (CORS preflight)
             if ($method === 'OPTIONS') {
                 $optionsResponse = $this->handleOptions($path);
+
                 if ($optionsResponse !== null) {
-                    $optionsResponse = $this->withCors($optionsResponse);
-                    return $this->stripBodyForHead($optionsResponse, $isHeadRequest);
+                    return $this->stripBodyForHead($this->withCors($optionsResponse), $isHeadRequest);
                 }
             }
 
-            // Try to find matching route (HEAD tries GET route if no HEAD route)
             $params = [];
             $route = $this->matchCompiled($path, $method, $params);
 
             if ($route === null && $isHeadRequest) {
-                // If no explicit HEAD route, fall back to GET route for same path
                 $route = $this->matchCompiled($path, 'GET', $params);
             }
 
@@ -63,33 +58,28 @@ class Dispatcher
                 $handler = $route->getHandler();
                 $middlewareStack = array_merge($this->globalMiddleware, $route->getMiddleware());
 
-                $coreHandler = function (ServerRequestInterface $request) use ($handler, $params): ResponseInterface {
-                    return $this->invokeHandler($handler, $request, $params);
+                $coreHandler = function (ServerRequestInterface $req) use ($handler, $params): ResponseInterface {
+                    return $this->invokeHandler($handler, $req, $params);
                 };
 
                 $response = $this->buildMiddlewareStack($middlewareStack, $coreHandler)($request);
 
-                $response = $this->withCors($response);
-                return $this->stripBodyForHead($response, $isHeadRequest);
+                return $this->stripBodyForHead($this->withCors($response), $isHeadRequest);
             }
 
-            // No route found -> 404
-            $response = $this->errorResponse(404, 'Not Found');
-            $response = $this->withCors($response);
+            return $this->stripBodyForHead(
+                $this->withCors($this->errorResponse(404, 'Not Found')),
+                $isHeadRequest
+            );
 
-            return $this->stripBodyForHead($response, $isHeadRequest);
         } catch (Throwable $e) {
-            // Unexpected error -> 500
-            $response = $this->errorResponse(500, $e);
-            $response = $this->withCors($response);
-
-            return $this->stripBodyForHead($response, $isHeadRequest);
+            return $this->stripBodyForHead(
+                $this->withCors($this->errorResponse(500, $e)),
+                $isHeadRequest
+            );
         }
     }
 
-    /**
-     * Apply CORS headers to a response.
-     */
     private function withCors(ResponseInterface $response): ResponseInterface
     {
         if (!$response->hasHeader('Access-Control-Allow-Origin')) {
@@ -110,9 +100,6 @@ class Dispatcher
         return $response;
     }
 
-    /**
-     * Strip body for HEAD requests as required by HTTP spec.
-     */
     private function stripBodyForHead(ResponseInterface $response, bool $isHeadRequest): ResponseInterface
     {
         if (!$isHeadRequest) {
@@ -120,14 +107,9 @@ class Dispatcher
         }
 
         $factory = new Psr17Factory();
-        $emptyStream = $factory->createStream('');
-
-        return $response->withBody($emptyStream);
+        return $response->withBody($factory->createStream(''));
     }
 
-    /**
-     * Handle automatic OPTIONS preflight.
-     */
     private function handleOptions(string $path): ?ResponseInterface
     {
         $allowed = [];
@@ -139,34 +121,25 @@ class Dispatcher
             }
         }
 
-        $allowed = array_values(array_unique($allowed));
+        $allowed = array_unique($allowed);
 
-        // HEAD is automatically allowed if GET is allowed
         if (in_array('GET', $allowed, true) && !in_array('HEAD', $allowed, true)) {
             $allowed[] = 'HEAD';
         }
 
-        if (empty($allowed)) {
+        if ($allowed === []) {
             return null;
         }
 
         $factory = new Psr17Factory();
-        $response = $factory->createResponse(204);
 
-        return $response
+        return $factory->createResponse(204)
             ->withHeader('Allow', implode(', ', $allowed))
             ->withHeader('Access-Control-Allow-Origin', '*')
             ->withHeader('Access-Control-Allow-Methods', implode(', ', $allowed))
             ->withHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
     }
 
-    /**
-     * Build middleware pipeline.
-     *
-     * @param array<int, string> $middlewareStack
-     * @param callable(ServerRequestInterface):ResponseInterface $coreHandler
-     * @return callable(ServerRequestInterface):ResponseInterface
-     */
     private function buildMiddlewareStack(array $middlewareStack, callable $coreHandler): callable
     {
         $next = $coreHandler;
@@ -183,16 +156,10 @@ class Dispatcher
         return $next;
     }
 
-    /**
-     * @param callable|array|string $handler
-     * @param array<string, string|int> $params
-     */
     private function invokeHandler($handler, ServerRequestInterface $request, array $params): ResponseInterface
     {
         if (is_array($handler) && count($handler) === 2) {
-            $class = $handler[0];
-            $method = $handler[1];
-
+            [$class, $method] = $handler;
             $controller = $this->container->get($class);
 
             $arguments = array_values($params);
@@ -211,19 +178,15 @@ class Dispatcher
 
         $factory = new Psr17Factory();
         $response = $factory->createResponse(500);
-        $response->getBody()->write('Invalid route handler');
+        $response->getBody()->write('Invalid route handler.');
 
         return $response;
     }
 
     /**
-     * Fast route matching using compiled tree, with support for constraints.
-     *
-     * Route patterns:
-     *  - /user/{id}
-     *  - /post/{slug:[a-z0-9\-]+}
-     *
-     * @param array<string, string|int> $params
+     * ----------------------------
+     * FIXED VERSION OF matchCompiled()
+     * ----------------------------
      */
     private function matchCompiled(string $path, string $method, array &$params): ?Route
     {
@@ -234,29 +197,46 @@ class Dispatcher
         $params = [];
 
         foreach ($segments as $seg) {
-            // 1) Exact static match
+
+            // Static match
             if (isset($node['children'][$seg])) {
                 $node = $node['children'][$seg];
                 continue;
             }
 
-            // 2) Parameterized matches with optional constraints
+            // Dynamic segments
             $matched = false;
+            $withPattern = [];
+            $withoutPattern = [];
 
-            foreach ($node['children'] as $key => $child) {
-                if (preg_match('/^{([a-zA-Z_][a-zA-Z0-9_]*)(?::(.+))?}$/', $key, $matches)) {
-                    $name = $matches[1];
-                    $pattern = $matches[2] ?? null;
+            foreach ($node['children'] as $key => $childNode) {
 
-                    if ($pattern !== null && preg_match('#^' . $pattern . '$#', $seg) !== 1) {
-                        continue;
+                if (preg_match('/^{([a-zA-Z_][a-zA-Z0-9_]*)(?::(.+))?}$/', $key, $m)) {
+
+                    // FIX: safe detection of optional patterns
+                    $hasPattern = isset($m[2]) && $m[2] !== '';
+
+                    if ($hasPattern) {
+                        $withPattern[] = [$key, $childNode, $m];
+                    } else {
+                        $withoutPattern[] = [$key, $childNode, $m];
                     }
-
-                    $params[$name] = $seg;
-                    $node = $child;
-                    $matched = true;
-                    break;
                 }
+            }
+
+            // Try pattern first → then no-pattern
+            foreach (array_merge($withPattern, $withoutPattern) as [$key, $childNode, $m]) {
+                $name = $m[1];
+                $pattern = (isset($m[2]) && $m[2] !== '') ? $m[2] : null;
+
+                if ($pattern && preg_match('#^' . $pattern . '$#', $seg) !== 1) {
+                    continue;
+                }
+
+                $params[$name] = $seg;
+                $node = $childNode;
+                $matched = true;
+                break;
             }
 
             if (!$matched) {
@@ -264,8 +244,8 @@ class Dispatcher
             }
         }
 
+        // Check for method match
         if (!empty($node['routes'])) {
-            /** @var Route $route */
             foreach ($node['routes'] as $route) {
                 if ($route->getMethod() === $method) {
                     return $route;
@@ -276,40 +256,31 @@ class Dispatcher
         return null;
     }
 
-    /**
-     * Legacy matcher used for things like OPTIONS method discovery,
-     * now also supports constraints {id:\d+}.
-     *
-     * @param array<string, string|int> $params
-     */
     private function match(string $routePath, string $requestPath, array &$params): bool
     {
         $routeParts = explode('/', trim($routePath, '/'));
-        $requestParts = explode('/', trim($requestPath, '/'));
+        $reqParts   = explode('/', trim($requestPath, '/'));
 
-        if (count($routeParts) !== count($requestParts)) {
+        if (count($routeParts) !== count($reqParts)) {
             return false;
         }
 
         $params = [];
 
-        foreach ($routeParts as $index => $part) {
-            // Parameterized segments: {id} or {id:\d+}
-            if (preg_match('/^{([a-zA-Z_][a-zA-Z0-9_]*)(?::(.+))?}$/', $part, $matches)) {
-                $name = $matches[1];
-                $pattern = $matches[2] ?? null;
-                $value = $requestParts[$index];
+        foreach ($routeParts as $i => $part) {
+            if (preg_match('/^{([a-zA-Z_][a-zA-Z0-9_]*)(?::(.+))?}$/', $part, $m)) {
+                $pattern = $m[2] ?? null;
+                $value = $reqParts[$i];
 
-                if ($pattern !== null && preg_match('#^' . $pattern . '$#', $value) !== 1) {
+                if ($pattern && preg_match('#^' . $pattern . '$#', $value) !== 1) {
                     return false;
                 }
 
-                $params[$name] = $value;
+                $params[$m[1]] = $value;
                 continue;
             }
 
-            // Static segments
-            if ($part !== $requestParts[$index]) {
+            if ($part !== $reqParts[$i]) {
                 return false;
             }
         }
@@ -317,68 +288,39 @@ class Dispatcher
         return true;
     }
 
-    /**
-     * Build custom error responses. Uses Twig if available:
-     *  - App/Views/errors/404.twig
-     *  - App/Views/errors/500.twig
-     *
-     * Falls back to plain text if templates are missing.
-     *
-     * @param int $status
-     * @param string|Throwable $error
-     */
     private function errorResponse(int $status, $error): ResponseInterface
     {
         $factory = new Psr17Factory();
-
-        // Determine debug mode from config, if available
         $debug = false;
+
         try {
             $config = $this->container->get('config.app');
-            if (is_array($config) && array_key_exists('debug', $config)) {
-                $debug = (bool) $config['debug'];
-            }
-        } catch (Throwable $e) {
-            // ignore, default debug = false
-        }
+            $debug = is_array($config) && ($config['debug'] ?? false);
+        } catch (Throwable $ignore) {}
 
-        $message = '';
+        $message = match ($status) {
+            404 => 'Page not found',
+            500 => ($error instanceof Throwable && $debug)
+                ? $error->getMessage()
+                : 'Internal Server Error',
+            default => is_string($error) ? $error : 'Error',
+        };
 
-        if ($status === 404) {
-            $message = 'Page not found';
-        } elseif ($status === 500) {
-            if ($error instanceof Throwable) {
-                $message = $debug ? $error->getMessage() : 'Internal Server Error';
-            } else {
-                $message = 'Internal Server Error';
-            }
-        } else {
-            $message = is_string($error) ? $error : 'Error';
-        }
-
-        // Try Twig-based error page if Twig is registered
         if (class_exists(TwigRenderer::class) && $this->container->has(TwigRenderer::class)) {
             try {
                 /** @var TwigRenderer $view */
                 $view = $this->container->get(TwigRenderer::class);
 
-                $template = 'errors/' . $status . '.twig';
-                $data = [
-                    'status' => $status,
-                    'message' => $message,
-                    'debug' => $debug,
-                    'exception' => $error instanceof Throwable && $debug ? $error : null,
-                ];
+                return $view->render("errors/$status.twig", [
+                    'status'    => $status,
+                    'message'   => $message,
+                    'debug'     => $debug,
+                    'exception' => $debug && $error instanceof Throwable ? $error : null,
+                ])->withStatus($status);
 
-                $response = $view->render($template, $data)->withStatus($status);
-
-                return $response;
-            } catch (Throwable $e) {
-                // if Twig fails (missing template, etc.), fall back to plain text
-            }
+            } catch (Throwable $ignore) {}
         }
 
-        // Plain text fallback
         $response = $factory->createResponse($status);
         $response->getBody()->write($message);
 

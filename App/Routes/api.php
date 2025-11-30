@@ -4,6 +4,16 @@ use Framework\Router\RouteCollector;
 use App\Http\Controllers\UserController;
 
 return static function (RouteCollector $routes): void {
-    $routes->get('/api/users', [UserController::class, 'apiIndex']);
-    $routes->get('/api/user/{id}', [UserController::class, 'apiShow']);
+
+    // API prefix group: /api
+    $routes->group('/api', function (RouteCollector $routes) {
+
+        // Users resource
+        $routes->group('/users', function (RouteCollector $routes) {
+            $routes->get('/',  [UserController::class, 'apiIndex']); // GET /api/users
+            $routes->get('/{id}', [UserController::class, 'apiShow']); // GET /api/users/{id}
+        });
+
+    });
+
 };

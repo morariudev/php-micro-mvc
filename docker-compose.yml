@@ -6,13 +6,18 @@ services:
       context: .
       dockerfile: Dockerfile.dev
     container_name: php_app_dev
+
+    environment:
+      APP_ENV: local
+      APP_DEBUG: "true"
+      APP_URL: "http://localhost:8080"
+
     env_file:
       - .env
+
     volumes:
       - ./:/var/www/html
-      - ./database:/var/www/html/database
-      - ./uploads:/var/www/html/uploads
-      - ./cache:/var/www/html/cache
+
     networks:
       - app-network
 

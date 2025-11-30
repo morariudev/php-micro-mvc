@@ -1,0 +1,43 @@
+#!/usr/bin/env php
+<?php
+
+use Framework\Bootstrap;
+use Framework\Router\Router;
+
+require __DIR__ . '/../vendor/autoload.php';
+require __DIR__ . '/../Framework/helpers.php';
+
+$command = $argv[1] ?? 'help';
+
+$basePath  = dirname(__DIR__);
+$bootstrap = new Bootstrap($basePath);
+
+// We only need container + routes, no HTTP dispatcher.
+$bootstrap->init(); // initializes everything; cheap enough for CLI
+$container = $bootstrap->getContainer();
+
+/** @var Router $router */
+$router = $container->get(Router::class);
+
+switch ($command) {
+    case 'routes':
+    case 'route:list':
+        echo "Registered routes:\n\n";
+        foreach ($router->getRoutes() as $route) {
+            printf("%-7s %s\n", $route->getMethod(), $route->getPath());
+        }
+        break;
+
+    case 'route:cache':
+        // Just re-run loadRoutes + cache usage is handled by Bootstrap.
+        echo "Route cache is handled automatically on first non-debug request.\n";
+        echo "You can clear cache by deleting cache/routes.cache.php.\n";
+        break;
+
+    default:
+        echo "Available commands:\n";
+        echo "  route:list    List all routes\n";
+        echo "  routes        Alias of route:list\n";
+        echo "  route:cache   (info) Route cache handled on web bootstrap\n";
+        break;
+}
