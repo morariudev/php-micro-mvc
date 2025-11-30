@@ -1,4 +1,5 @@
 services:
+
   app:
     build:
       context: .
@@ -9,20 +10,34 @@ services:
         APP_URL: https://cs101.uk
     container_name: php_app_prod
     env_file:
-      - .env.prod
+      - .env
     networks:
       - app-network
+
+    # Persistent storage for SQLite + uploads + cache
+    volumes:
+      - ./database:/var/www/html/database
+      - ./uploads:/var/www/html/uploads
+      - ./cache:/var/www/html/cache
 
   web:
     image: nginx:stable
     container_name: nginx_web_prod
+
     ports:
       - "80:80"
+
+    # 🚀 IMPORTANT: Nginx must see the project files!
+    # This was missing and caused 404 in production.
     volumes:
+      - ./:/var/www/html
       - ./nginx/default.conf:/etc/nginx/conf.d/default.conf
+
+      # App runtime directories
       - ./uploads:/var/www/html/uploads
       - ./database:/var/www/html/database
       - ./cache:/var/www/html/cache
+
     depends_on:
       - app
     networks:

@@ -7,23 +7,23 @@ use Nyholm\Psr7Server\ServerRequestCreator;
 require __DIR__ . '/../vendor/autoload.php';
 require __DIR__ . '/../Framework/helpers.php';
 
-// Load environment file (.env, .env.dev, or .env.prod)
-$envFile = __DIR__ . '/../.env';
+/**
+ * Environment Loading:
+ * --------------------
+ * Docker now provides APP_ENV, APP_DEBUG, APP_URL.
+ * We only load .env as an optional fallback.
+ */
+$envFile = dirname(__DIR__) . '/.env';
 
-if (file_exists(__DIR__ . '/../.env.dev')) {
-    $envFile = __DIR__ . '/../.env.dev';
+if (file_exists($envFile)) {
+    loadEnv($envFile);
 }
 
-if (file_exists(__DIR__ . '/../.env.prod')) {
-    $envFile = __DIR__ . '/../.env.prod';
-}
-
-loadEnv($envFile);
-
-// Bootstrap
+// Bootstrap application
 $bootstrap = new Bootstrap(dirname(__DIR__));
 $dispatcher = $bootstrap->init();
 
+// Create PSR-7 server request
 $psr17Factory = new Psr17Factory();
 $creator = new ServerRequestCreator(
     $psr17Factory,
@@ -33,14 +33,18 @@ $creator = new ServerRequestCreator(
 );
 
 $request = $creator->fromGlobals();
+
+// Dispatch request through middleware + router
 $response = $dispatcher->dispatch($request);
 
-// Emit response
+// Emit response headers + status
 http_response_code($response->getStatusCode());
+
 foreach ($response->getHeaders() as $key => $values) {
     foreach ($values as $value) {
         header("$key: $value", false);
     }
 }
 
+// Emit body
 echo $response->getBody();

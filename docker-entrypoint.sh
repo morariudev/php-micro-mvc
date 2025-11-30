@@ -1,43 +1,28 @@
-#!/usr/bin/env sh
+#!/bin/bash
 set -e
 
-DB_DIR="/var/www/html/database"
-DB_FILE="$DB_DIR/database.sqlite"
+echo "==============================================="
+echo "  PHP Container Booting"
+echo "  Environment : ${APP_ENV:-unknown}"
+echo "  Debug       : ${APP_DEBUG:-false}"
+echo "  URL         : ${APP_URL:-http://localhost}"
+echo "==============================================="
 
-echo "➡ Starting container initialization..."
+DB_FILE="/var/www/html/database/database.sqlite"
 
-# -----------------------------------------
-# Ensure directories exist
-# -----------------------------------------
-mkdir -p "$DB_DIR"
-mkdir -p /var/www/html/cache
-mkdir -p /var/www/html/uploads
+echo "➡ Checking database schema..."
 
-chown -R www-data:www-data /var/www/html/database
-chown -R www-data:www-data /var/www/html/cache
-chown -R www-data:www-data /var/www/html/uploads
-
-chmod -R 775 /var/www/html/database
-chmod -R 775 /var/www/html/cache
-chmod -R 775 /var/www/html/uploads
-
-# -----------------------------------------
-# Create DB file if missing
-# -----------------------------------------
 if [ ! -f "$DB_FILE" ]; then
-    echo "➡ Creating SQLite database..."
+    echo "➡ Creating database file..."
     touch "$DB_FILE"
     chown www-data:www-data "$DB_FILE"
 fi
 
-# -----------------------------------------
-# Create users table
-# -----------------------------------------
-TABLE_EXISTS=$(sqlite3 "$DB_FILE" "SELECT name FROM sqlite_master WHERE type='table' AND name='users';")
+TABLE_EXISTS=$(sqlite3 $DB_FILE "SELECT name FROM sqlite_master WHERE type='table' AND name='users';")
 
 if [ -z "$TABLE_EXISTS" ]; then
     echo "➡ Creating users table..."
-    sqlite3 "$DB_FILE" <<EOF
+    sqlite3 $DB_FILE <<EOF
 CREATE TABLE users (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     name TEXT NOT NULL,
@@ -46,25 +31,19 @@ CREATE TABLE users (
 EOF
 fi
 
-# -----------------------------------------
-# Seed users table
-# -----------------------------------------
-HAS_DATA=$(sqlite3 "$DB_FILE" "SELECT COUNT(*) FROM users;")
+HAS_DATA=$(sqlite3 $DB_FILE "SELECT COUNT(*) FROM users;")
 
 if [ "$HAS_DATA" -eq "0" ]; then
     echo "➡ Seeding users table..."
-    sqlite3 "$DB_FILE" <<EOF
+    sqlite3 $DB_FILE <<EOF
 INSERT INTO users (name, email) VALUES
 ('Alice', 'alice@example.com'),
 ('Bob', 'bob@example.com');
 EOF
 else
-    echo "➡ Users table already has data ($HAS_DATA row(s))."
+    echo "➡ Users table already contains $HAS_DATA row(s)."
 fi
 
 echo "➡ Database ready!"
 
-# -----------------------------------------
-# Run final command (PHP-FPM)
-# -----------------------------------------
 exec "$@"

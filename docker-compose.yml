@@ -4,12 +4,12 @@ services:
       context: .
       dockerfile: Dockerfile.dev
       args:
-        APP_ENV: local
+        APP_ENV: development
         APP_DEBUG: "true"
         APP_URL: http://localhost:8080
     container_name: php_app_dev
     env_file:
-      - .env.dev
+      - .env
     volumes:
       - ./:/var/www/html
       - ./database:/var/www/html/database
