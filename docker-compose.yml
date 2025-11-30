@@ -1,12 +1,10 @@
+version: "3.9"
+
 services:
   app:
     build:
       context: .
       dockerfile: Dockerfile.dev
-      args:
-        APP_ENV: development
-        APP_DEBUG: "true"
-        APP_URL: http://localhost:8080
     container_name: php_app_dev
     env_file:
       - .env

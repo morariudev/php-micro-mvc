@@ -1,11 +1,11 @@
 FROM php:8.4-fpm AS builder
 
-# Build arguments
+# Build arguments (compile-time only)
 ARG APP_ENV=production
 ARG APP_DEBUG=false
 ARG APP_URL=https://cs101.uk
 
-# Install system deps
+# Install system dependencies
 RUN apt-get update && apt-get install -y \
     git \
     unzip \
@@ -16,7 +16,7 @@ RUN apt-get update && apt-get install -y \
 
 WORKDIR /var/www/html
 
-# Copy Composer config first
+# Copy composer files only
 COPY composer.json composer.lock ./
 
 # Install Composer
@@ -32,19 +32,19 @@ RUN composer install \
     --no-interaction \
     --prefer-dist
 
-# Copy application source
+# Copy full source
 COPY . .
 
-# Create required dirs
+# Create writable dirs
 RUN mkdir -p cache database uploads \
     && touch database/database.sqlite \
-    && chown -R www-data:www-data /var/www/html
+    && chown -R www-data:www-data database cache uploads
 
-# Copy ENTRYPOINT script
+# Entry script
 COPY ./docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
 RUN chmod +x /usr/local/bin/docker-entrypoint.sh
 
-# Copy PHP production configs
+# Production PHP configs
 COPY php_setup/prod/php.ini /usr/local/etc/php/php.ini
 COPY php_setup/prod/opcache.ini /usr/local/etc/php/conf.d/opcache.ini
 

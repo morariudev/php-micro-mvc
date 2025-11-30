@@ -1,16 +1,11 @@
 FROM php:8.4-fpm
 
-# Build args (dev override)
+# Build args (optional for builder display)
 ARG APP_ENV=local
 ARG APP_DEBUG=true
 ARG APP_URL=http://localhost:8080
 
-# Convert args to container ENV vars
-ENV APP_ENV=${APP_ENV}
-ENV APP_DEBUG=${APP_DEBUG}
-ENV APP_URL=${APP_URL}
-
-# Install dev dependencies
+# System dependencies
 RUN apt-get update && apt-get install -y \
     git \
     unzip \
@@ -19,34 +14,34 @@ RUN apt-get update && apt-get install -y \
     && docker-php-ext-install pdo pdo_sqlite \
     && rm -rf /var/lib/apt/lists/*
 
-# Xdebug ONLY in dev
+# Xdebug for dev only
 RUN pecl install xdebug && docker-php-ext-enable xdebug || true
 
 WORKDIR /var/www/html
 
 COPY composer.json composer.lock ./
 
-# Install composer
+# Install Composer
 RUN php -r "copy('https://getcomposer.org/installer', 'composer-setup.php');" \
     && php composer-setup.php --install-dir=/usr/local/bin --filename=composer \
     && rm composer-setup.php
 
-# Install ALL dependencies in dev (including dev packages)
+# Install ALL dependencies for dev
 RUN composer install --no-interaction
 
-# Copy application
+# Copy source
 COPY . .
 
-# Create necessary dirs
+# Writable dirs
 RUN mkdir -p cache database uploads \
     && touch database/database.sqlite \
-    && chown -R www-data:www-data /var/www/html
+    && chown -R www-data:www-data database cache uploads
 
 # Entry script
 COPY ./docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
 RUN chmod +x /usr/local/bin/docker-entrypoint.sh
 
-# Copy DEV PHP configuration
+# Dev PHP configuration
 COPY php_setup/dev/php.ini /usr/local/etc/php/php.ini
 COPY php_setup/dev/opcache.ini /usr/local/etc/php/conf.d/opcache.ini
 
