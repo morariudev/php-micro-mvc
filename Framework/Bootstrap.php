@@ -18,11 +18,11 @@ use Framework\View\TwigRenderer;
 /**
  * Class Bootstrap
  *
- * Handles the initialization of the framework:
- * - Loads config
+ * Initializes the framework:
+ * - Loads configuration
  * - Registers core services (DB, Twig, Session, Events)
- * - Loads routes (with optional route caching)
- * - Sets up the dispatcher and middleware
+ * - Loads routes (optionally cached)
+ * - Sets up the Dispatcher with middleware
  */
 class Bootstrap
 {
@@ -38,7 +38,7 @@ class Bootstrap
     }
 
     /**
-     * Initialize framework and return the HTTP Dispatcher.
+     * Initialize framework and return the HTTP dispatcher.
      */
     public function init(): Dispatcher
     {
@@ -82,23 +82,27 @@ class Bootstrap
             return new Database($this->container->get('config.database'));
         });
 
-        // Twig singleton (pass session + debug flag)
-        $this->container->set(TwigRenderer::class, function () use ($debug): TwigRenderer {
-            $session = $this->container->get(SessionManager::class);
-            return new TwigRenderer($this->basePath . '/App/Views', $session, $debug);
-        });
-
-        // Session manager
+        // SessionManager singleton
         $this->container->set(SessionManager::class, function () {
             return new SessionManager();
         });
 
-        // Event dispatcher
+        // TwigRenderer singleton
+        $this->container->set(TwigRenderer::class, function () use ($debug): TwigRenderer {
+            $twig = new TwigRenderer($this->basePath . '/App/Views', $debug);
+
+            // Inject SessionManager after construction
+            $twig->setSession($this->container->get(SessionManager::class));
+
+            return $twig;
+        });
+
+        // EventDispatcher singleton
         $this->container->set(EventDispatcher::class, function () {
             return new EventDispatcher();
         });
 
-        // Container & router access
+        // Make container and router available for DI
         $this->container->set(Container::class, $this->container);
         $this->container->set(Router::class, $this->router);
     }

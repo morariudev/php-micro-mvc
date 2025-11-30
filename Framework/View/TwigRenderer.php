@@ -9,41 +9,40 @@ use Twig\Loader\FilesystemLoader;
 use Twig\TwigFunction;
 use Framework\Session\SessionManager;
 
-/**
- * Class TwigRenderer
- *
- * Handles rendering Twig templates and provides helper functions.
- * Supports optional caching in production mode.
- */
 class TwigRenderer
 {
     private Environment $twig;
     private Psr17Factory $factory;
     private SessionManager $session;
-    private bool $debug;
 
     /**
-     * TwigRenderer constructor.
+     * Constructor.
      *
-     * @param string $viewsPath Path to the Twig templates
-     * @param SessionManager $session The session manager instance (required)
-     * @param bool $debug Enable debug mode (optional, default true)
+     * @param string      $viewsPath Path to Twig templates
+     * @param bool        $debug     If true, disables cache (dev mode)
+     * @param string|null $version   Optional cache version string for deploys
      */
-    public function __construct(string $viewsPath, SessionManager $session, bool $debug = true)
+    public function __construct(string $viewsPath, bool $debug = true, ?string $version = null)
     {
-        $this->session = $session;
-        $this->debug   = $debug;
-
-        // Filesystem loader for Twig
         $loader = new FilesystemLoader($viewsPath);
 
-        // Cache folder only in non-debug mode
-        $cachePath = $debug ? false : __DIR__ . '/../../cache/twig';
+        // Set cache folder (disabled in debug)
+        if ($debug) {
+            $cachePath = false;
+        } else {
+            $versionSuffix = $version ? '-' . $version : '';
+            $cachePath = __DIR__ . '/../../cache/twig' . $versionSuffix;
 
-        if ($cachePath && !is_dir($cachePath)) {
-            mkdir($cachePath, 0775, true);
+            // Ensure folder exists
+            if (!is_dir($cachePath)) {
+                mkdir($cachePath, 0775, true);
+            } else {
+                // Optional: clear old compiled templates to avoid stale cache
+                $this->clearCacheFolder($cachePath);
+            }
         }
 
+        // Initialize Twig environment
         $this->twig = new Environment($loader, [
             'cache'      => $cachePath,
             'autoescape' => 'html',
@@ -56,45 +55,37 @@ class TwigRenderer
     }
 
     /**
-     * Register custom Twig helper functions.
+     * Register custom Twig functions (helpers)
      */
     private function registerHelpers(): void
     {
-        // ----------------------------------------------------
-        // CSRF token helper: {{ csrf() }}
-        // ----------------------------------------------------
+        // CSRF token helper
         $this->twig->addFunction(new TwigFunction('csrf', function () {
-            $token = $this->session->get('_csrf_token') ?? '';
+            $token = $this->session?->get('_csrf_token') ?? '';
             return '<input type="hidden" name="_csrf" value="' . htmlspecialchars($token, ENT_QUOTES, 'UTF-8') . '">';
         }, ['is_safe' => ['html']]));
 
-        // ----------------------------------------------------
-        // Asset URL helper: {{ asset('css/app.css') }}
-        // ----------------------------------------------------
+        // Asset path helper
         $this->twig->addFunction(new TwigFunction('asset', function (string $path) {
             return '/' . ltrim($path, '/');
         }));
 
-        // ----------------------------------------------------
-        // Root-relative URL helper: {{ url('/users/5') }}
-        // ----------------------------------------------------
+        // URL helper
         $this->twig->addFunction(new TwigFunction('url', function (string $path) {
             return '/' . ltrim($path, '/');
         }));
 
-        // ----------------------------------------------------
-        // Flash message helper: {{ flash('success') }}
-        // ----------------------------------------------------
+        // Flash message helper
         $this->twig->addFunction(new TwigFunction('flash', function (string $key) {
-            return $this->session->getFlash($key);
+            return $this->session?->getFlash($key);
         }));
     }
 
     /**
      * Render a Twig template into a PSR-7 response.
      *
-     * @param string $template
-     * @param array<string, mixed> $data
+     * @param string $template Template file path
+     * @param array  $data     Variables to pass to template
      */
     public function render(string $template, array $data = []): ResponseInterface
     {
@@ -107,7 +98,7 @@ class TwigRenderer
     }
 
     /**
-     * Return a JSON PSR-7 response.
+     * Create a JSON PSR-7 response.
      */
     public function createJsonResponse(string $json, int $status = 200): ResponseInterface
     {
@@ -118,10 +109,31 @@ class TwigRenderer
     }
 
     /**
-     * Access raw Twig Environment object (for adding filters, globals, etc.)
+     * Access raw Twig environment (for adding filters, globals, etc.)
      */
     public function getTwig(): Environment
     {
         return $this->twig;
+    }
+
+    /**
+     * Set the session manager for CSRF / flash helpers.
+     */
+    public function setSession(SessionManager $session): void
+    {
+        $this->session = $session;
+    }
+
+    /**
+     * Optional: clear old compiled cache files.
+     */
+    private function clearCacheFolder(string $folder): void
+    {
+        $files = glob($folder . '/*');
+        foreach ($files as $file) {
+            if (is_file($file)) {
+                @unlink($file);
+            }
+        }
     }
 }
