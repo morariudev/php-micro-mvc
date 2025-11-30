@@ -1,0 +1,73 @@
+# -----------------------------------------
+# ENVIRONMENT FILES
+# -----------------------------------------
+.env
+.env.*
+!.env.example
+
+# -----------------------------------------
+# COMPOSER
+# -----------------------------------------
+vendor/
+
+# -----------------------------------------
+# PHP FILES & LOGS
+# -----------------------------------------
+*.log
+*.cache
+*.tmp
+
+# -----------------------------------------
+# ROUTE CACHE / TEMPORARY FILES
+# -----------------------------------------
+cache/*
+!cache/.gitkeep
+
+# -----------------------------------------
+# APPLICATION STORAGE
+# -----------------------------------------
+uploads/*
+!uploads/.gitkeep
+
+database/database.sqlite
+database/*.sqlite
+database/*.db
+database/*.sqlite3
+
+# Keep a placeholder for empty dir
+!database/.gitkeep
+
+# -----------------------------------------
+# SYSTEM DIRECTORIES
+# -----------------------------------------
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# -----------------------------------------
+# NODE / FRONTEND (if you add later)
+# -----------------------------------------
+node_modules/
+dist/
+public/build/
+
+# -----------------------------------------
+# DOCKER
+# -----------------------------------------
+*.pid
+*.seed
+
+# Docker volumes (local only)
+docker-volumes/
+
+# -----------------------------------------
+# NGINX / GENERATED FILES
+# -----------------------------------------
+nginx/*.generated.conf
+
+# -----------------------------------------
+# MAC / WINDOWS SYSTEM FILES
+# -----------------------------------------
+.DS_Store
+Thumbs.db

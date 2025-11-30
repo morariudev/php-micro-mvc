@@ -1,0 +1,36 @@
+services:
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile.dev
+      args:
+        APP_ENV: local
+        APP_DEBUG: "true"
+        APP_URL: http://localhost:8080
+    container_name: php_app_dev
+    env_file:
+      - .env.dev
+    volumes:
+      - ./:/var/www/html
+      - ./database:/var/www/html/database
+      - ./uploads:/var/www/html/uploads
+      - ./cache:/var/www/html/cache
+    networks:
+      - app-network
+
+  web:
+    image: nginx:stable
+    container_name: nginx_dev
+    ports:
+      - "8080:80"
+    volumes:
+      - ./:/var/www/html
+      - ./nginx/default.dev.conf:/etc/nginx/conf.d/default.conf
+    depends_on:
+      - app
+    networks:
+      - app-network
+
+networks:
+  app-network:
+    driver: bridge

@@ -1,0 +1,43 @@
+FROM php:8.4-fpm
+
+# Build-time arguments (optional override)
+ARG APP_ENV=local
+ARG APP_DEBUG=true
+ARG APP_URL=http://localhost:8080
+
+# Convert them to real ENV variables inside container
+ENV APP_ENV=${APP_ENV}
+ENV APP_DEBUG=${APP_DEBUG}
+ENV APP_URL=${APP_URL}
+
+RUN apt-get update && apt-get install -y \
+    git \
+    unzip \
+    libsqlite3-dev \
+    sqlite3 \
+    && docker-php-ext-install pdo pdo_sqlite \
+    && rm -rf /var/lib/apt/lists/*
+
+# Optional Xdebug support for development
+RUN pecl install xdebug && docker-php-ext-enable xdebug || true
+
+WORKDIR /var/www/html
+
+COPY composer.json composer.lock ./
+RUN php -r "copy('https://getcomposer.org/installer', 'composer-setup.php');" \
+    && php composer-setup.php --install-dir=/usr/local/bin --filename=composer \
+    && rm composer-setup.php \
+    && composer install --no-interaction
+
+COPY . .
+
+RUN mkdir -p cache database uploads \
+    && touch database/database.sqlite \
+    && chown -R www-data:www-data /var/www/html
+
+COPY ./docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
+RUN chmod +x /usr/local/bin/docker-entrypoint.sh
+
+EXPOSE 9000
+ENTRYPOINT ["docker-entrypoint.sh"]
+CMD ["php-fpm"]
