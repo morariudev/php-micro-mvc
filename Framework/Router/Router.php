@@ -4,178 +4,178 @@ namespace Framework\Router;
 
 class Router
 {
-    /** @var array<int, Route> */
-    private array $routes = [];
-
-    /**
-     * Compiled route tree:
-     * [
-     *   'children' => [
-     *       'segment' => [
-     *           'children' => [...],
-     *           'routes'   => [Route, ...]
-     *       ],
-     *       ...
-     *   ],
-     *   'routes' => [Route, ...]   // Routes for "/"
-     * ]
-     *
-     * @var array<string, mixed>
-     */
-    private array $compiledTree = [
-        'children' => [],
-        'routes'   => [],
+    /** @var array<string, array<int,Route>>  */
+    private array $routes = [
+        'GET'     => [],
+        'POST'    => [],
+        'PUT'     => [],
+        'PATCH'   => [],
+        'DELETE'  => [],
+        'OPTIONS' => [],
+        'HEAD'    => [],
     ];
 
-    private bool $compiled = false;
-
-    public function __construct()
-    {
-        $this->resetCompiledTree();
-    }
-
     /**
-     * Register a new route.
-     *
-     * @param callable|array|string $handler
+     * Register a route.
      */
     public function add(string $method, string $path, $handler): Route
     {
         $method = strtoupper($method);
-        $path   = $this->normalizePath($path);
+        $path   = $this->normalize($path);
+
+        if (!isset($this->routes[$method])) {
+            $this->routes[$method] = [];
+        }
 
         $route = new Route($method, $path, $handler);
 
-        // Prevent accidental duplicates in development
-        $this->guardAgainstDuplicateRoute($route);
+        $this->guardDuplicate($route);
 
-        $this->routes[] = $route;
-
-        // Mark compiled tree dirty
-        $this->compiled = false;
+        $this->routes[$method][] = $route;
 
         return $route;
     }
 
     /**
-     * @return array<int, Route>
+     * Shortcut helpers
      */
-    public function getRoutes(): array
+    public function get(string $path, $h): Route { return $this->add('GET', $path, $h); }
+    public function post(string $path, $h): Route { return $this->add('POST', $path, $h); }
+    public function put(string $path, $h): Route { return $this->add('PUT', $path, $h); }
+    public function patch(string $path, $h): Route { return $this->add('PATCH', $path, $h); }
+    public function delete(string $path, $h): Route { return $this->add('DELETE', $path, $h); }
+
+    public function all(string $path, $h): void
     {
-        return $this->routes;
+        foreach (['GET','POST','PUT','PATCH','DELETE','OPTIONS','HEAD'] as $method) {
+            $this->add($method, $path, $h);
+        }
     }
 
     /**
-     * Used by RouteCache + Bootstrap to load cached routes.
+     * Normalize "/foo///bar/" → "/foo/bar"
+     */
+    private function normalize(string $path): string
+    {
+        $path = preg_replace('#/+#', '/', trim($path));
+        $path = '/' . ltrim($path, '/');
+        return rtrim($path, '/') ?: '/';
+    }
+
+    /**
+     * Prevent duplicate method+path.
+     */
+    private function guardDuplicate(Route $route): void
+    {
+        foreach ($this->routes[$route->getMethod()] as $existing) {
+            if ($existing->getPath() === $route->getPath()) {
+                throw new \RuntimeException("Duplicate route [{$route->getMethod()}] {$route->getPath()}");
+            }
+        }
+    }
+
+    /**
+     * Match a route by method+path.
+     */
+    public function match(string $method, string $path, array &$params = []): ?Route
+    {
+        $path = $this->normalize($path);
+        $method = strtoupper($method);
+
+        // HEAD fallback to GET
+        $searchMethods = [$method];
+        if ($method === 'HEAD') {
+            $searchMethods[] = 'GET';
+        }
+
+        foreach ($searchMethods as $m) {
+            if (!isset($this->routes[$m])) {
+                continue;
+            }
+
+            foreach ($this->routes[$m] as $route) {
+                if ($this->pathMatches($route->getPath(), $path, $params)) {
+                    return $route;
+                }
+            }
+        }
+
+        return null;
+    }
+
+    /**
+     * Match dynamic paths:
+     *   /user/{id}
+     *   /post/{slug:[a-z\-]+}
+     */
+    private function pathMatches(string $routePath, string $reqPath, array &$params): bool
+    {
+        if ($routePath === $reqPath) {
+            $params = [];
+            return true;
+        }
+
+        $routeParts = explode('/', trim($routePath, '/'));
+        $urlParts   = explode('/', trim($reqPath, '/'));
+
+        if (count($routeParts) !== count($urlParts)) {
+            return false;
+        }
+
+        $params = [];
+
+        foreach ($routeParts as $i => $part) {
+            // Dynamic {name} or {name:regex}
+            if (preg_match('/^{([a-zA-Z_][a-zA-Z0-9_]*)(?::(.+))?}$/', $part, $m)) {
+                $name = $m[1];
+                $regex = $m[2] ?? '[^/]+';
+
+                if (!preg_match('#^' . $regex . '$#', $urlParts[$i])) {
+                    return false;
+                }
+
+                $params[$name] = $urlParts[$i];
+                continue;
+            }
+
+            // Static mismatch
+            if ($part !== $urlParts[$i]) {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    /**
+     * Exposed for debugging / route cache
      *
-     * @param array<int, Route> $routes
+     * @return array<int,Route>
+     */
+    public function getAllRoutesFlat(): array
+    {
+        return array_merge(...array_values($this->routes));
+    }
+
+    /**
+     * Used only by RouteCache to restore state.
+     *
+     * @param array<int,Route> $routes
      */
     public function setRoutes(array $routes): void
     {
-        $this->routes   = $routes;
-        $this->compiled = false;
-    }
-
-    /**
-     * Reset the compiled route tree.
-     */
-    private function resetCompiledTree(): void
-    {
-        $this->compiledTree = [
-            'children' => [],
-            'routes'   => [],
+        $this->routes = [
+            'GET'     => [],
+            'POST'    => [],
+            'PUT'     => [],
+            'PATCH'   => [],
+            'DELETE'  => [],
+            'OPTIONS' => [],
+            'HEAD'    => [],
         ];
-        $this->compiled = false;
-    }
 
-    /**
-     * Normalize and validate route paths.
-     *
-     * - Always starts with "/"
-     * - Trim trailing slash unless it's the root
-     */
-    private function normalizePath(string $path): string
-    {
-        $path = trim($path);
-
-        if ($path === '') {
-            return '/';
+        foreach ($routes as $r) {
+            $this->routes[$r->getMethod()][] = $r;
         }
-
-        $path = '/' . ltrim($path, '/');
-        return $path === '/' ? '/' : rtrim($path, '/');
-    }
-
-    /**
-     * Throw an exception if a duplicate method + path is added.
-     */
-    private function guardAgainstDuplicateRoute(Route $route): void
-    {
-        foreach ($this->routes as $existing) {
-            if (
-                $existing->getMethod() === $route->getMethod() &&
-                $existing->getPath() === $route->getPath()
-            ) {
-                // This is only a warning-level issue but very helpful for debugging.
-                throw new \RuntimeException(
-                    sprintf(
-                        'Duplicate route detected: [%s] %s',
-                        $route->getMethod(),
-                        $route->getPath()
-                    )
-                );
-            }
-        }
-    }
-
-    /**
-     * Build a fast-matching route tree based on path segments.
-     * Dynamic segments remain in raw form: "{id}" or "{slug:[a-z]+}".
-     */
-    public function compile(): void
-    {
-        if ($this->compiled) {
-            return;
-        }
-
-        $this->resetCompiledTree();
-
-        foreach ($this->routes as $route) {
-            $path     = $route->getPath();
-            $segments = $path === '/' ? [] : explode('/', trim($path, '/'));
-
-            $node =& $this->compiledTree;
-
-            foreach ($segments as $seg) {
-                if (!isset($node['children'][$seg])) {
-                    $node['children'][$seg] = [
-                        'children' => [],
-                        'routes'   => [],
-                    ];
-                }
-
-                // Move deeper into the tree
-                $node =& $node['children'][$seg];
-            }
-
-            // Attach route to leaf node
-            $node['routes'][] = $route;
-        }
-
-        $this->compiled = true;
-    }
-
-    /**
-     * Get the compiled route tree, compiling if needed.
-     *
-     * @return array<string, mixed>
-     */
-    public function getCompiledTree(): array
-    {
-        if (!$this->compiled) {
-            $this->compile();
-        }
-
-        return $this->compiledTree;
     }
 }

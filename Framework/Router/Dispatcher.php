@@ -2,7 +2,6 @@
 
 namespace Framework\Router;
 
-use Framework\Middleware\MiddlewareInterface;
 use Framework\Support\Container;
 use Framework\View\TwigRenderer;
 use Nyholm\Psr7\Factory\Psr17Factory;
@@ -15,7 +14,7 @@ class Dispatcher
     private Router $router;
     private Container $container;
 
-    /** @var array<int, string> */
+    /** @var array<int,string> */
     private array $globalMiddleware = [];
 
     public function __construct(Router $router, Container $container)
@@ -24,306 +23,171 @@ class Dispatcher
         $this->container = $container;
     }
 
-    public function addMiddleware(string $middlewareClass): void
+    public function addMiddleware(string $middleware): void
     {
-        $this->globalMiddleware[] = $middlewareClass;
+        $this->globalMiddleware[] = $middleware;
     }
 
     public function dispatch(ServerRequestInterface $request): ResponseInterface
     {
-        $path = rtrim($request->getUri()->getPath(), '/') ?: '/';
-        $originalMethod = strtoupper($request->getMethod());
-        $method = $originalMethod;
-        $isHeadRequest = $method === 'HEAD';
-
-        $this->router->compile();
+        $method   = strtoupper($request->getMethod());
+        $path     = rtrim($request->getUri()->getPath(), '/') ?: '/';
 
         try {
+            // OPTIONS preflight
             if ($method === 'OPTIONS') {
-                $optionsResponse = $this->handleOptions($path);
-
-                if ($optionsResponse !== null) {
-                    return $this->stripBodyForHead($this->withCors($optionsResponse), $isHeadRequest);
-                }
+                $resp = $this->handleOptions($path);
+                return $resp ?? $this->jsonError(404, 'No routes for OPTIONS');
             }
 
+            // HEAD fallback to GET inside Router::match()
             $params = [];
-            $route = $this->matchCompiled($path, $method, $params);
+            $route = $this->router->match($method, $path, $params);
 
-            if ($route === null && $isHeadRequest) {
-                $route = $this->matchCompiled($path, 'GET', $params);
+            if (!$route) {
+                return $this->errorResponse(404, 'Not Found');
             }
 
-            if ($route !== null) {
-                $handler = $route->getHandler();
-                $middlewareStack = array_merge($this->globalMiddleware, $route->getMiddleware());
-
-                $coreHandler = function (ServerRequestInterface $req) use ($handler, $params): ResponseInterface {
-                    return $this->invokeHandler($handler, $req, $params);
-                };
-
-                $response = $this->buildMiddlewareStack($middlewareStack, $coreHandler)($request);
-
-                return $this->stripBodyForHead($this->withCors($response), $isHeadRequest);
-            }
-
-            return $this->stripBodyForHead(
-                $this->withCors($this->errorResponse(404, 'Not Found')),
-                $isHeadRequest
+            $handler = $route->getHandler();
+            $middlewareStack = array_merge(
+                $this->globalMiddleware,
+                $route->getMiddleware()
             );
+
+            $core = function (ServerRequestInterface $req) use ($handler, $params): ResponseInterface {
+                return $this->invokeHandler($handler, $req, $params);
+            };
+
+            $pipeline = $this->buildPipeline($middlewareStack, $core);
+
+            return $pipeline($request);
 
         } catch (Throwable $e) {
-            return $this->stripBodyForHead(
-                $this->withCors($this->errorResponse(500, $e)),
-                $isHeadRequest
-            );
+            return $this->errorResponse(500, $e);
         }
     }
 
-    private function withCors(ResponseInterface $response): ResponseInterface
+    /**
+     * ----------------------------
+     * Middleware Pipeline
+     * ----------------------------
+     */
+    private function buildPipeline(array $stack, callable $core): callable
     {
-        if (!$response->hasHeader('Access-Control-Allow-Origin')) {
-            $response = $response->withHeader('Access-Control-Allow-Origin', '*');
-        }
+        $next = $core;
 
-        if (!$response->hasHeader('Access-Control-Allow-Headers')) {
-            $response = $response->withHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
-        }
+        while ($class = array_pop($stack)) {
+            $middleware = $this->container->get($class);
 
-        if (!$response->hasHeader('Access-Control-Allow-Methods')) {
-            $response = $response->withHeader(
-                'Access-Control-Allow-Methods',
-                'GET, POST, PUT, PATCH, DELETE, OPTIONS, HEAD'
-            );
-        }
-
-        return $response;
-    }
-
-    private function stripBodyForHead(ResponseInterface $response, bool $isHeadRequest): ResponseInterface
-    {
-        if (!$isHeadRequest) {
-            return $response;
-        }
-
-        $factory = new Psr17Factory();
-        return $response->withBody($factory->createStream(''));
-    }
-
-    private function handleOptions(string $path): ?ResponseInterface
-    {
-        $allowed = [];
-
-        foreach ($this->router->getRoutes() as $route) {
-            $params = [];
-            if ($this->match($route->getPath(), $path, $params)) {
-                $allowed[] = strtoupper($route->getMethod());
-            }
-        }
-
-        $allowed = array_unique($allowed);
-
-        if (in_array('GET', $allowed, true) && !in_array('HEAD', $allowed, true)) {
-            $allowed[] = 'HEAD';
-        }
-
-        if ($allowed === []) {
-            return null;
-        }
-
-        $factory = new Psr17Factory();
-
-        return $factory->createResponse(204)
-            ->withHeader('Allow', implode(', ', $allowed))
-            ->withHeader('Access-Control-Allow-Origin', '*')
-            ->withHeader('Access-Control-Allow-Methods', implode(', ', $allowed))
-            ->withHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
-    }
-
-    private function buildMiddlewareStack(array $middlewareStack, callable $coreHandler): callable
-    {
-        $next = $coreHandler;
-
-        while ($middlewareClass = array_pop($middlewareStack)) {
-            /** @var MiddlewareInterface $middleware */
-            $middleware = $this->container->get($middlewareClass);
-
-            $next = function (ServerRequestInterface $request) use ($middleware, $next): ResponseInterface {
-                return $middleware->process($request, $next);
+            $next = function (ServerRequestInterface $req) use ($middleware, $next) {
+                return $middleware->process($req, new class($next) implements \Psr\Http\Server\RequestHandlerInterface {
+                    private $next;
+                    public function __construct(callable $next) { $this->next = $next; }
+                    public function handle(ServerRequestInterface $request): ResponseInterface {
+                        return ($this->next)($request);
+                    }
+                });
             };
         }
 
         return $next;
     }
 
-    private function invokeHandler($handler, ServerRequestInterface $request, array $params): ResponseInterface
+    /**
+     * ----------------------------
+     * Invoke Handler
+     * ----------------------------
+     */
+    private function invokeHandler($handler, ServerRequestInterface $req, array $params): ResponseInterface
     {
-        if (is_array($handler) && count($handler) === 2) {
+        // Controller method: [Controller::class, 'method']
+        if (is_array($handler)) {
             [$class, $method] = $handler;
             $controller = $this->container->get($class);
-
-            $arguments = array_values($params);
-            array_unshift($arguments, $request);
-
-            return $controller->{$method}(...$arguments);
+            return $controller->$method($req, ...array_values($params));
         }
 
+        // Closures
         if (is_callable($handler)) {
-            return $handler($request, $params);
+            return $handler($req, $params);
         }
 
+        // Function name
         if (is_string($handler) && function_exists($handler)) {
-            return $handler($request, $params);
+            return $handler($req, $params);
         }
 
-        $factory = new Psr17Factory();
-        $response = $factory->createResponse(500);
-        $response->getBody()->write('Invalid route handler.');
-
-        return $response;
+        return $this->jsonError(500, 'Invalid route handler');
     }
 
     /**
      * ----------------------------
-     * FIXED VERSION OF matchCompiled()
+     * OPTIONS support
      * ----------------------------
      */
-    private function matchCompiled(string $path, string $method, array &$params): ?Route
+    private function handleOptions(string $path): ?ResponseInterface
     {
-        $tree = $this->router->getCompiledTree();
-        $segments = $path === '/' ? [] : explode('/', trim($path, '/'));
+        $allowed = [];
 
-        $node = $tree;
-        $params = [];
-
-        foreach ($segments as $seg) {
-
-            // Static match
-            if (isset($node['children'][$seg])) {
-                $node = $node['children'][$seg];
-                continue;
-            }
-
-            // Dynamic segments
-            $matched = false;
-            $withPattern = [];
-            $withoutPattern = [];
-
-            foreach ($node['children'] as $key => $childNode) {
-
-                if (preg_match('/^{([a-zA-Z_][a-zA-Z0-9_]*)(?::(.+))?}$/', $key, $m)) {
-
-                    // FIX: safe detection of optional patterns
-                    $hasPattern = isset($m[2]) && $m[2] !== '';
-
-                    if ($hasPattern) {
-                        $withPattern[] = [$key, $childNode, $m];
-                    } else {
-                        $withoutPattern[] = [$key, $childNode, $m];
-                    }
-                }
-            }
-
-            // Try pattern first → then no-pattern
-            foreach (array_merge($withPattern, $withoutPattern) as [$key, $childNode, $m]) {
-                $name = $m[1];
-                $pattern = (isset($m[2]) && $m[2] !== '') ? $m[2] : null;
-
-                if ($pattern && preg_match('#^' . $pattern . '$#', $seg) !== 1) {
-                    continue;
-                }
-
-                $params[$name] = $seg;
-                $node = $childNode;
-                $matched = true;
-                break;
-            }
-
-            if (!$matched) {
-                return null;
+        foreach ($this->router->getAllRoutesFlat() as $route) {
+            $params = [];
+            if ($this->router->match($route->getMethod(), $path, $params)) {
+                $allowed[] = $route->getMethod();
             }
         }
 
-        // Check for method match
-        if (!empty($node['routes'])) {
-            foreach ($node['routes'] as $route) {
-                if ($route->getMethod() === $method) {
-                    return $route;
-                }
-            }
+        $allowed = array_unique($allowed);
+        if (!$allowed) {
+            return null;
         }
 
-        return null;
+        $f = new Psr17Factory();
+        return $f->createResponse(204)
+            ->withHeader('Allow', implode(', ', $allowed))
+            ->withHeader('Access-Control-Allow-Origin', '*')
+            ->withHeader('Access-Control-Allow-Methods', implode(', ', $allowed))
+            ->withHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
     }
 
-    private function match(string $routePath, string $requestPath, array &$params): bool
-    {
-        $routeParts = explode('/', trim($routePath, '/'));
-        $reqParts   = explode('/', trim($requestPath, '/'));
-
-        if (count($routeParts) !== count($reqParts)) {
-            return false;
-        }
-
-        $params = [];
-
-        foreach ($routeParts as $i => $part) {
-            if (preg_match('/^{([a-zA-Z_][a-zA-Z0-9_]*)(?::(.+))?}$/', $part, $m)) {
-                $pattern = $m[2] ?? null;
-                $value = $reqParts[$i];
-
-                if ($pattern && preg_match('#^' . $pattern . '$#', $value) !== 1) {
-                    return false;
-                }
-
-                $params[$m[1]] = $value;
-                continue;
-            }
-
-            if ($part !== $reqParts[$i]) {
-                return false;
-            }
-        }
-
-        return true;
-    }
-
-    private function errorResponse(int $status, $error): ResponseInterface
+    /**
+     * ----------------------------
+     * Error Response
+     * ----------------------------
+     */
+    private function errorResponse(int $code, $error): ResponseInterface
     {
         $factory = new Psr17Factory();
-        $debug = false;
 
-        try {
-            $config = $this->container->get('config.app');
-            $debug = is_array($config) && ($config['debug'] ?? false);
-        } catch (Throwable $ignore) {}
+        // Debug mode? Use message
+        $message = ($error instanceof Throwable)
+            ? $error->getMessage()
+            : (string)$error;
 
-        $message = match ($status) {
-            404 => 'Page not found',
-            500 => ($error instanceof Throwable && $debug)
-                ? $error->getMessage()
-                : 'Internal Server Error',
-            default => is_string($error) ? $error : 'Error',
-        };
+        $response = $factory->createResponse($code);
 
-        if (class_exists(TwigRenderer::class) && $this->container->has(TwigRenderer::class)) {
+        // Use Twig if available
+        if ($this->container->has(TwigRenderer::class)) {
             try {
                 /** @var TwigRenderer $view */
                 $view = $this->container->get(TwigRenderer::class);
-
-                return $view->render("errors/$status.twig", [
-                    'status'    => $status,
-                    'message'   => $message,
-                    'debug'     => $debug,
-                    'exception' => $debug && $error instanceof Throwable ? $error : null,
-                ])->withStatus($status);
-
-            } catch (Throwable $ignore) {}
+                return $view->render("errors/$code.twig", [
+                    'status' => $code,
+                    'message' => $message,
+                    'exception' => $error instanceof Throwable ? $error : null,
+                ])->withStatus($code);
+            } catch (Throwable) {}
         }
 
-        $response = $factory->createResponse($status);
+        // Fallback
         $response->getBody()->write($message);
+        return $response->withHeader('Content-Type', 'text/plain');
+    }
 
-        return $response->withHeader('Content-Type', 'text/plain; charset=utf-8');
+    private function jsonError(int $code, string $msg): ResponseInterface
+    {
+        $factory = new Psr17Factory();
+        $r = $factory->createResponse($code);
+        $r->getBody()->write(json_encode(['error' => $msg]));
+        return $r->withHeader('Content-Type', 'application/json');
     }
 }

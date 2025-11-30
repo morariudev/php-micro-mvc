@@ -6,6 +6,8 @@ use Framework\Session\SessionManager;
 use Nyholm\Psr7\Factory\Psr17Factory;
 use Psr\Http\Message\ResponseInterface;
 use Psr\Http\Message\ServerRequestInterface;
+use Psr\Http\Server\MiddlewareInterface;
+use Psr\Http\Server\RequestHandlerInterface;
 
 class CsrfMiddleware implements MiddlewareInterface
 {
@@ -16,44 +18,48 @@ class CsrfMiddleware implements MiddlewareInterface
         $this->session = $session;
     }
 
-    public function process(ServerRequestInterface $request, callable $next): ResponseInterface
+    public function process(ServerRequestInterface $request, RequestHandlerInterface $handler): ResponseInterface
     {
         $this->session->start();
 
-        // 1. Always ensure a CSRF token exists
+        // Ensure token exists
         if (!$this->session->get('_csrf_token')) {
             $this->session->set('_csrf_token', bin2hex(random_bytes(32)));
         }
 
         $token = $this->session->get('_csrf_token');
 
-        // 2. For safe methods: just attach the token
+        // Safe methods: GET, HEAD, OPTIONS
         if (!in_array($request->getMethod(), ['POST', 'PUT', 'PATCH', 'DELETE'], true)) {
-            return $next($request->withAttribute('csrf_token', $token));
+            return $handler->handle(
+                $request->withAttribute('csrf_token', $token)
+            );
         }
 
-        // 3. For unsafe methods: validate CSRF token
+        // Extract incoming token
         $parsed = $request->getParsedBody();
-        if (!is_array($parsed)) {
-            $parsed = [];
+        $sentToken = is_array($parsed) ? ($parsed['_csrf'] ?? null) : null;
+
+        // Or header token
+        if ($request->hasHeader('X-CSRF-TOKEN')) {
+            $sentToken = $request->getHeaderLine('X-CSRF-TOKEN');
         }
 
-        $sentToken = $parsed['_csrf'] ?? null;
-
-        // Also allow header token for JSON / API clients
-        $headerToken = $request->getHeaderLine('X-CSRF-TOKEN');
-        if ($headerToken !== '') {
-            $sentToken = $headerToken;
+        if (!is_string($sentToken) || !hash_equals($token, $sentToken)) {
+            return $this->failedResponse();
         }
 
-        if (!is_string($sentToken) || !hash_equals((string) $token, $sentToken)) {
-            $factory = new Psr17Factory();
-            $response = $factory->createResponse(419); // Laravel-style CSRF code
-            $response->getBody()->write('CSRF token mismatch.');
-            return $response->withHeader('Content-Type', 'text/plain; charset=utf-8');
-        }
-
-        return $next($request->withAttribute('csrf_token', $token));
+        return $handler->handle(
+            $request->withAttribute('csrf_token', $token)
+        );
     }
 
+    private function failedResponse(): ResponseInterface
+    {
+        $factory = new Psr17Factory();
+        $response = $factory->createResponse(419);
+        $response->getBody()->write('CSRF token mismatch.');
+        return $response
+            ->withHeader('Content-Type', 'text/plain; charset=utf-8');
+    }
 }

@@ -4,16 +4,22 @@ namespace Framework\Middleware;
 
 use Psr\Http\Message\ResponseInterface;
 use Psr\Http\Message\ServerRequestInterface;
+use Psr\Http\Server\MiddlewareInterface as PsrMiddleware;
+use Psr\Http\Server\RequestHandlerInterface;
 
-interface MiddlewareInterface
+/**
+ * Fully PSR-15 compatible middleware interface.
+ *
+ * This simply aliases the real PSR interface so your framework
+ * can import it from a consistent namespace.
+ */
+interface MiddlewareInterface extends PsrMiddleware
 {
     /**
-     * Process an incoming request.
-     *
-     * Compatible with PSR-15:
-     *   - $next behaves like a RequestHandlerInterface::handle()
-     *
-     * @param callable(ServerRequestInterface):ResponseInterface $next
+     * Process an incoming request and return a response.
      */
-    public function process(ServerRequestInterface $request, callable $next): ResponseInterface;
+    public function process(
+        ServerRequestInterface $request,
+        RequestHandlerInterface $handler
+    ): ResponseInterface;
 }
