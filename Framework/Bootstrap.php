@@ -25,6 +25,7 @@ use Framework\View\TwigRenderer;
  * - Loads routes (optionally cached)
  * - Sets up the Dispatcher with middleware
  * - Adds optional HTTP response caching in production
+ * - Prepares DB/Model layer (timestamps, soft deletes, query builder)
  */
 class Bootstrap
 {
@@ -63,8 +64,7 @@ class Bootstrap
         if (!$debug) {
             $cacheDir = $this->basePath . '/cache/http';
             $ttl      = 60; // default cache duration in seconds
-            $gzip     = true; // enable gzip for cached responses
-            $dispatcher->addMiddleware(new ResponseCacheMiddleware($cacheDir, $ttl, $gzip));
+            $dispatcher->addMiddleware(new ResponseCacheMiddleware($cacheDir, $ttl));
         }
 
         return $dispatcher;
@@ -83,7 +83,8 @@ class Bootstrap
     }
 
     /**
-     * Register core framework services.
+     * Register core framework services including DB, Twig, Session, Events
+     * and prepare model layer.
      */
     private function registerCoreServices(): void
     {
@@ -103,10 +104,7 @@ class Bootstrap
         // TwigRenderer singleton
         $this->container->set(TwigRenderer::class, function () use ($debug): TwigRenderer {
             $twig = new TwigRenderer($this->basePath . '/App/Views', $debug);
-
-            // Inject SessionManager after construction
             $twig->setSession($this->container->get(SessionManager::class));
-
             return $twig;
         });
 
@@ -115,7 +113,7 @@ class Bootstrap
             return new EventDispatcher();
         });
 
-        // Make container and router available for DI
+        // Container & router DI
         $this->container->set(Container::class, $this->container);
         $this->container->set(Router::class, $this->router);
     }
