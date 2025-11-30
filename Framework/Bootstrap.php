@@ -48,7 +48,7 @@ class Bootstrap
     private function loadConfig(): void
     {
         $app = require $this->basePath . '/App/Config/app.php';
-        $db = require $this->basePath . '/App/Config/database.php';
+        $db  = require $this->basePath . '/App/Config/database.php';
 
         $this->container->set('config.app', $app);
         $this->container->set('config.database', $db);
@@ -56,18 +56,26 @@ class Bootstrap
 
     private function registerCoreServices(): void
     {
+        $appConfig = $this->container->get('config.app');
+        $debug     = (bool)($appConfig['debug'] ?? true);
+
+        // Database singleton
         $this->container->set(Database::class, function (): Database {
             return new Database($this->container->get('config.database'));
         });
 
-        $this->container->set(TwigRenderer::class, function (): TwigRenderer {
-            return new TwigRenderer($this->basePath . '/App/Views');
+        // TwigRenderer singleton with debug-aware caching
+        $this->container->set(TwigRenderer::class, function () use ($debug): TwigRenderer {
+            $cachePath = $debug ? null : $this->basePath . '/cache/twig';
+            return new TwigRenderer($this->basePath . '/App/Views', $debug, $cachePath);
         });
 
+        // SessionManager singleton
         $this->container->set(SessionManager::class, function () {
             return new SessionManager();
         });
 
+        // EventDispatcher singleton
         $this->container->set(EventDispatcher::class, function () {
             return new EventDispatcher();
         });
@@ -83,10 +91,10 @@ class Bootstrap
         $cacheFile  = $this->basePath . '/cache/routes.cache.php';
         $cache      = new RouteCache($cacheFile);
 
-        // Try to load from cache in non-debug mode
         $appConfig = $this->container->get('config.app');
         $debug     = (bool)($appConfig['debug'] ?? false);
 
+        // Load from cache if not in debug mode
         if (!$debug) {
             $cachedRoutes = $cache->read();
             if ($cachedRoutes !== null) {
@@ -95,17 +103,20 @@ class Bootstrap
             }
         }
 
-        // No cache (or debug mode) → load from route files
         $collector = new RouteCollector($this->router);
 
         foreach (glob($routesPath . '/*.php') as $file) {
-            $callback = require $file;
-            if (is_callable($callback)) {
-                $callback($collector);
+            try {
+                $callback = require $file;
+                if (is_callable($callback)) {
+                    $callback($collector);
+                }
+            } catch (\Throwable $e) {
+                error_log("Failed to load route file $file: " . $e->getMessage());
             }
         }
 
-        // Only write cache if we're not in debug and routes are cacheable
+        // Cache routes if cacheable and not in debug
         if (!$debug && $this->routesAreCacheable()) {
             $cache->write($this->router->getRoutes());
         }
@@ -118,12 +129,10 @@ class Bootstrap
     {
         foreach ($this->router->getRoutes() as $route) {
             $handler = $route->getHandler();
-
             if ($handler instanceof \Closure) {
                 return false;
             }
         }
-
         return true;
     }
 

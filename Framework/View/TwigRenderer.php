@@ -7,22 +7,33 @@ use Psr\Http\Message\ResponseInterface;
 use Twig\Environment;
 use Twig\Loader\FilesystemLoader;
 use Twig\TwigFunction;
+use Framework\Session\SessionManager;
 
 class TwigRenderer
 {
     private Environment $twig;
     private Psr17Factory $factory;
+    private SessionManager $session;
 
-    public function __construct(string $viewsPath)
+    public function __construct(string $viewsPath, bool $debug = true)
     {
         $loader = new FilesystemLoader($viewsPath);
 
+        // Use cache only in non-debug mode
+        $cachePath = $debug ? false : __DIR__ . '/../../cache/twig';
+
+        // Ensure cache folder exists
+        if ($cachePath !== false && !is_dir($cachePath)) {
+            mkdir($cachePath, 0775, true);
+        }
+
         $this->twig = new Environment($loader, [
-            'cache'      => false, // change to /cache/twig for prod
-            'autoescape' => 'html'
+            'cache'      => $cachePath,
+            'autoescape' => 'html',
+            'debug'      => $debug,
         ]);
 
-        $this->factory = new Psr17Factory();
+        $this->factory = new \Nyholm\Psr7\Factory\Psr17Factory();
 
         $this->registerHelpers();
     }
@@ -32,56 +43,25 @@ class TwigRenderer
      */
     private function registerHelpers(): void
     {
-        /**
-         * ----------------------------------------------------
-         * {{ csrf() }}
-         * Prints a hidden input with the session CSRF token.
-         * ----------------------------------------------------
-         */
+        // CSRF token
         $this->twig->addFunction(new TwigFunction('csrf', function () {
-            $token = $_SESSION['_csrf_token'] ?? '';
+            $token = $this->session->get('_csrf_token') ?? '';
             return '<input type="hidden" name="_csrf" value="' . htmlspecialchars($token, ENT_QUOTES, 'UTF-8') . '">';
         }, ['is_safe' => ['html']]));
 
-        /**
-         * ----------------------------------------------------
-         * {{ asset('css/app.css') }}
-         * Produces: /css/app.css
-         * (No /public prefix — public directory IS the web root)
-         * ----------------------------------------------------
-         */
+        // Asset path
         $this->twig->addFunction(new TwigFunction('asset', function (string $path) {
             return '/' . ltrim($path, '/');
         }));
 
-        /**
-         * ----------------------------------------------------
-         * {{ url('users') }} → /users
-         * {{ url('/users/5') }} → /users/5
-         * Simple, root-relative URL generator.
-         * ----------------------------------------------------
-         */
+        // URL helper
         $this->twig->addFunction(new TwigFunction('url', function (string $path) {
             return '/' . ltrim($path, '/');
         }));
 
-        /**
-         * ----------------------------------------------------
-         * {{ flash('success') }}
-         * Retrieves and clears a flash message.
-         *
-         * IMPORTANT: this helper ONLY retrieves.
-         * Flash storage is handled in SessionManager.
-         * ----------------------------------------------------
-         */
+        // Flash messages
         $this->twig->addFunction(new TwigFunction('flash', function (string $key) {
-            if (!isset($_SESSION['_flash'][$key])) {
-                return null;
-            }
-
-            $value = $_SESSION['_flash'][$key];
-            unset($_SESSION['_flash'][$key]);
-            return $value;
+            return $this->session->getFlash($key);
         }));
     }
 

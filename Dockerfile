@@ -35,10 +35,10 @@ RUN composer install \
 # Copy full source
 COPY . .
 
-# Create writable dirs
-RUN mkdir -p cache database uploads \
+# Create writable dirs including Twig cache
+RUN mkdir -p cache/twig database uploads \
     && touch database/database.sqlite \
-    && chown -R www-data:www-data database cache uploads
+    && chown -R www-data:www-data cache database uploads
 
 # Entry script
 COPY ./docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh

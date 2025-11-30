@@ -137,14 +137,12 @@ class Dispatcher
         }
 
         $allowed = array_unique($allowed);
-        if (!$allowed) {
-            return null;
-        }
+        if (!$allowed) return null;
 
         $f = new Psr17Factory();
         return $f->createResponse(204)
             ->withHeader('Allow', implode(', ', $allowed))
-            ->withHeader('Access-Control-Allow-Origin', '*')
+            ->withHeader('Access-Control-Allow-Origin', $_ENV['CORS_ORIGIN'] ?? '*')
             ->withHeader('Access-Control-Allow-Methods', implode(', ', $allowed))
             ->withHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
     }

@@ -3,11 +3,11 @@
 namespace Framework\Middleware;
 
 use Framework\Session\SessionManager;
-use Nyholm\Psr7\Factory\Psr17Factory;
 use Psr\Http\Message\ResponseInterface;
 use Psr\Http\Message\ServerRequestInterface;
 use Psr\Http\Server\MiddlewareInterface;
 use Psr\Http\Server\RequestHandlerInterface;
+use Nyholm\Psr7\Factory\Psr17Factory;
 
 class CsrfMiddleware implements MiddlewareInterface
 {
@@ -23,14 +23,14 @@ class CsrfMiddleware implements MiddlewareInterface
         $this->session->start();
 
         // Ensure token exists
-        if (!$this->session->get('_csrf_token')) {
-            $this->session->set('_csrf_token', bin2hex(random_bytes(32)));
+        $token = $this->session->get('_csrf_token');
+        if (!$token) {
+            $token = bin2hex(random_bytes(32));
+            $this->session->set('_csrf_token', $token);
         }
 
-        $token = $this->session->get('_csrf_token');
-
         // Safe methods: GET, HEAD, OPTIONS
-        if (!in_array($request->getMethod(), ['POST', 'PUT', 'PATCH', 'DELETE'], true)) {
+        if (in_array($request->getMethod(), ['GET', 'HEAD', 'OPTIONS'], true)) {
             return $handler->handle(
                 $request->withAttribute('csrf_token', $token)
             );
@@ -59,7 +59,6 @@ class CsrfMiddleware implements MiddlewareInterface
         $factory = new Psr17Factory();
         $response = $factory->createResponse(419);
         $response->getBody()->write('CSRF token mismatch.');
-        return $response
-            ->withHeader('Content-Type', 'text/plain; charset=utf-8');
+        return $response->withHeader('Content-Type', 'text/plain; charset=utf-8');
     }
 }

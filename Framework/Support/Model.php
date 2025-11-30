@@ -17,10 +17,9 @@ abstract class Model
 
     public function find(int $id): ?array
     {
-        $stmt = $this->pdo->prepare('SELECT * FROM ' . $this->table . ' WHERE id = :id LIMIT 1');
+        $stmt = $this->pdo->prepare('SELECT * FROM `' . $this->table . '` WHERE `id` = :id LIMIT 1');
         $stmt->execute(['id' => $id]);
         $result = $stmt->fetch();
-
         return $result === false ? null : $result;
     }
 
@@ -40,11 +39,9 @@ abstract class Model
      */
     public function where(string $column, $value): array
     {
-        $stmt = $this->pdo->prepare('SELECT * FROM ' . $this->table . ' WHERE ' . $column . ' = :value');
+        $stmt = $this->pdo->prepare('SELECT * FROM `' . $this->table . '` WHERE `' . $column . '` = :value');
         $stmt->execute(['value' => $value]);
-
         $results = $stmt->fetchAll();
-
         return $results ?: [];
     }
 
