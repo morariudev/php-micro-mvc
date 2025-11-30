@@ -53,16 +53,18 @@ class Bootstrap
         $appConfig = $this->container->get('config.app');
         $debug     = (bool)($appConfig['debug'] ?? true);
 
-        // Middleware stack: auth → JSON body → CSRF → example
+        // Middleware stack order: auth → JSON body → CSRF → example
         $dispatcher->addMiddleware(SessionAuthMiddleware::class);
         $dispatcher->addMiddleware(\Framework\Middleware\JsonBodyMiddleware::class);
         $dispatcher->addMiddleware(CsrfMiddleware::class);
         $dispatcher->addMiddleware(ExampleMiddleware::class);
 
-        // HTTP Response caching middleware in production
+        // HTTP Response caching in production
         if (!$debug) {
             $cacheDir = $this->basePath . '/cache/http';
-            $dispatcher->addMiddleware(new ResponseCacheMiddleware($cacheDir, 60));
+            $ttl      = 60; // default cache duration in seconds
+            $gzip     = true; // enable gzip for cached responses
+            $dispatcher->addMiddleware(new ResponseCacheMiddleware($cacheDir, $ttl, $gzip));
         }
 
         return $dispatcher;
@@ -102,7 +104,7 @@ class Bootstrap
         $this->container->set(TwigRenderer::class, function () use ($debug): TwigRenderer {
             $twig = new TwigRenderer($this->basePath . '/App/Views', $debug);
 
-            // Inject SessionManager for CSRF & flash helpers
+            // Inject SessionManager after construction
             $twig->setSession($this->container->get(SessionManager::class));
 
             return $twig;
